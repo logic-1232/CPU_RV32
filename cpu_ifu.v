@@ -18,6 +18,7 @@ module cpu_ifu (
         input               flush_flag,
         input               wait_exe,
         input               wait_jmp,
+        input               decompr_en,
         output  reg         jmp_pred,  // 跳转预测标志
         output  reg         jmp_reg_en,  // 使用寄存器跳转标志
         output      [4:0]   jmp_rs,  // 跳转指令使用的寄存器地址
@@ -72,6 +73,7 @@ module cpu_ifu (
         .flush_flag     (flush_flag),
         .wait_exe       (wait_exe),
         .wait_jmp       (wait_jmp),
+        .decompr_en     (decompr_en),
         .jmp_pred       (jmp_pred),
         .pc_now         (pc_now),
         .pc_jmp         (pc_jmp),

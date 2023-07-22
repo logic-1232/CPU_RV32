@@ -16,6 +16,7 @@ module cpu_idu (
         input               rst_n,
         input               flush_flag,
         input               wait_exe,
+        input               decompr_en,
         input       [31:0]  instruction,
         /*寄存器地址*/
         output  reg         pc_en,
@@ -331,7 +332,7 @@ module cpu_idu (
                     ram_ctrl <= 5'b00000;
                     imm_en <= 2'b01;
                     imm1 <= {{11{imm_j[19]}}, imm_j, 1'b0};  // 末尾补0相当于左移一位
-                    imm0 <= 32'd4;
+                    imm0 <= decompr_en ? 32'd2 : 32'd4;
                 end
                 `JALR   : begin
                     pc_en <= 1'b1;
@@ -343,7 +344,7 @@ module cpu_idu (
                     ram_ctrl <= 5'b00000;
                     imm_en <= 2'b01;
                     imm1 <= {{20{imm_i[11]}}, imm_i};
-                    imm0 <= 32'd4;
+                    imm0 <= decompr_en ? 32'd2 : 32'd4;
                 end
                 `BRANCH : begin
                     pc_en <= 1'b0;

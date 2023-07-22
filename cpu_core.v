@@ -25,8 +25,10 @@ module cpu_core (
         output  reg [63:0]  ram_din
     );
 
-    wire                pc_en;
+    wire                pc_en;  // 操作数使用pc寄存器
+    wire                decompr_en;
     reg     [31:0]      instruction;
+    wire    [31:0]      instr_decompr, instr_now;
     wire    [15:0]      pc_now;
     wire    [4:0]       stp1_rs1, stp1_rs2, stp1_rs3, stp1_rd;
     wire    [63:0]      stp1_data1, stp1_data2, stp2_data2, stp3_data_rd;
@@ -170,23 +172,24 @@ module cpu_core (
         .flush_flag     (flush_flag),
         .wait_exe       (wait_exe),
         .wait_jmp       (wait_jmp),
+        .decompr_en     (decompr_en),
         .jmp_pred       (jmp_pred),
         .jmp_reg_en     (jmp_reg_en),
         .jmp_rs         (jmp_rs),
         .jmp_data       (jmp_data),
         .pc_now         (pc_now),
         .pc             (pc),
-        .instruction    (pc_instr)
+        .instruction    (instr_now)
     );
     always @(*) begin
         if(flush_flag)
             instruction = `NOP;
         else if(wait_exe)
-            instruction = pc_instr;
+            instruction = instr_now;
         else if(wait_jmp)
             instruction = `NOP;
         else
-            instruction = pc_instr;
+            instruction = instr_now;
     end
     /*取指模块的数据冲突问题*/
     always @(*) begin
@@ -212,11 +215,18 @@ module cpu_core (
 
 
     /*stp0-译码-stp1*/
+    assign  decompr_en = ~&pc_instr[1:0];
+    assign  instr_now = decompr_en ? instr_decompr : pc_instr;
+    decompress u_decompress(
+        .instr_c        (pc_instr[15:0]),
+        .instruction    (instr_decompr)
+    );
     cpu_idu cpu_idu_inst(
         .clk            (clk),
         .rst_n          (rst_n),
         .flush_flag     (flush_flag),
         .wait_exe       (wait_exe),
+        .decompr_en     (decompr_en),
         .instruction    (instruction),
         .fp_ctrl        (fp_ctrl),
         .alu_ctrl       (alu_ctrl),

@@ -16,6 +16,7 @@ module pc_gen (
         input               flush_flag,
         input               wait_exe,
         input               wait_jmp,
+        input               decompr_en,
         input               jmp_pred,
         input       [15:0]  pc_now,
         input       [15:0]  pc_jmp,
@@ -34,7 +35,7 @@ module pc_gen (
         else if(wait_exe | wait_jmp)
             pc_next = pc_now;
         else
-            pc_next = pc_now + 16'd4;
+            pc_next = pc_now + (decompr_en ? 16'd2 : 16'd4);
     end
     always @(*) begin  // 根据当前状态选择顺序执行和分支跳转
         if(flush_flag) begin
