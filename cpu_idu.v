@@ -107,6 +107,18 @@ module cpu_idu (
                                 default : alu_ctrl <= `ALU_NOP;
                             endcase
                         end
+                        `MULDIV : begin
+                            case (funct3)
+                                `MULL   : alu_ctrl <= `ALU_MULL;
+                                `MULH   : alu_ctrl <= `ALU_MULH;
+                                `MULHSU : alu_ctrl <= `ALU_MULHSU;
+                                `MULHU  : alu_ctrl <= `ALU_MULHU;
+                                `DIV    : alu_ctrl <= `ALU_DIV;
+                                `DIVU   : alu_ctrl <= `ALU_DIVU;
+                                `REM    : alu_ctrl <= `ALU_REM;
+                                `REMU   : alu_ctrl <= `ALU_REMU;
+                            endcase
+                        end
                         default : alu_ctrl <= `ALU_NOP;
                     endcase
                 end
