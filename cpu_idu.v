@@ -20,12 +20,16 @@ module cpu_idu (
         /*寄存器地址*/
         output  reg         pc_en,
         output  reg [2:1]   rs_en,
+        output  reg [3:1]   frs_en,
         output  reg [4:0]   rs1,
         output  reg [4:0]   rs2,
+        output  reg [4:0]   rs3,
         output  reg [4:0]   rd,
         /*功能使能、控制信号*/
+        output  reg [1:0]   fp_ctrl,  // 浮点控制（[0]:是否浮点，[1]:区分单双精度）
         output  reg [4:0]   alu_ctrl,  // 运算单元控制
         output  reg         wr_en,  // 通用寄存器写使能
+        output  reg         fp_wr_en,
         output  reg [2:0]   jmp_ctrl,  // 指令跳转功能控制（[2]:寄存器链接，[1]:无条件跳转，[0]:条件分支）
         output  reg [4:0]   ram_ctrl,  // [4:2]:数据长度控制，即funct3；[1]:写；[0]:使用数据存储器
         /*立即数*/
@@ -62,16 +66,19 @@ module cpu_idu (
         if(!rst_n || flush_flag) begin
             rs1 <= `X0;
             rs2 <= `X0;
+            rs3 <= `X0;
             rd  <= `X0;
         end
         else if(wait_exe) begin
             rs1 <= rs1;
             rs2 <= rs2;
+            rs3 <= rs3;
             rd  <= rd;
         end
         else begin
             rs1 <= instruction[19:15];
             rs2 <= instruction[24:20];
+            rs3 <= instruction[31:27];
             rd  <= instruction[11:7];
         end
     end
@@ -79,14 +86,17 @@ module cpu_idu (
     /*alu_ctrl*/
     always @(posedge clk or negedge rst_n) begin
         if(!rst_n || flush_flag) begin
+            fp_ctrl  <= `INT;
             alu_ctrl <= `ALU_ADD;
         end
         else if(wait_exe) begin
+            fp_ctrl  <= fp_ctrl;
             alu_ctrl <= alu_ctrl;
         end
         else begin
             case (opcode)
                 `OP     : begin  // 基础整数运算-寄存器
+                    fp_ctrl  <= `INT;
                     case (funct7)
                         `BASE   : begin
                             case (funct3)
@@ -123,6 +133,7 @@ module cpu_idu (
                     endcase
                 end
                 `OP_IMM : begin   // 基础整数运算-立即数
+                    fp_ctrl  <= `INT;
                     case (funct3)
                         `ADD    : alu_ctrl <= `ALU_ADD;
                         `SLL    : alu_ctrl <= `ALU_SLL;
@@ -134,14 +145,99 @@ module cpu_idu (
                         `AND    : alu_ctrl <= `ALU_AND;
                     endcase
                 end
-                `AUIPC  : alu_ctrl <= `ALU_ADD;
-                `LUI    : alu_ctrl <= `ALU_SLL;
-                `JAL    : alu_ctrl <= `ALU_ADD;
-                `JALR   : alu_ctrl <= `ALU_ADD;
-                `BRANCH : alu_ctrl <= {2'b01, funct3};
-                `LOAD   : alu_ctrl <= `ALU_ADD;
-                `STORE  : alu_ctrl <= `ALU_ADD;
-                default : alu_ctrl <= `ALU_NOP;
+                `AUIPC  : begin
+                    fp_ctrl  <= `INT;
+                    alu_ctrl <= `ALU_ADD;
+                end
+                `LUI    : begin
+                    fp_ctrl  <= `INT;
+                    alu_ctrl <= `ALU_SLL;
+                end
+                `JAL    : begin
+                    fp_ctrl  <= `INT;
+                    alu_ctrl <= `ALU_ADD;
+                end
+                `JALR   : begin
+                    fp_ctrl  <= `INT;
+                    alu_ctrl <= `ALU_ADD;
+                end
+                `BRANCH : begin
+                    fp_ctrl  <= `INT;
+                    alu_ctrl <= {2'b01, funct3};
+                end
+                `LOAD, `STORE   : begin
+                    fp_ctrl  <= `INT;
+                    alu_ctrl <= `ALU_ADD;
+                end
+                `LOAD_FP, `STORE_FP: begin
+                    fp_ctrl  <= `INT;
+                    alu_ctrl <= `ALU_ADD;
+                end
+                `MADD   : begin
+                    fp_ctrl <= funct7[0] ? `FP_D : `FP_S;
+                    alu_ctrl <= `ALU_FMADD;
+                end
+                `MSUB   : begin
+                    fp_ctrl <= funct7[0] ? `FP_D : `FP_S;
+                    alu_ctrl <= `ALU_FMSUB;
+                end
+                `NMADD  : begin
+                    fp_ctrl <= funct7[0] ? `FP_D : `FP_S;
+                    alu_ctrl <= `ALU_FNMADD;
+                end
+                `NMSUB  : begin
+                    fp_ctrl <= funct7[0] ? `FP_D : `FP_S;
+                    alu_ctrl <= `ALU_FNMSUB;
+                end
+                `OP_FP  : begin
+                    fp_ctrl <= funct7[0] ? `FP_D : `FP_S;
+                    case (funct7[6:1])
+                        `FADD   : alu_ctrl <= `ALU_FADD;
+                        `FSUB   : alu_ctrl <= `ALU_FSUB;
+                        `FMUL   : alu_ctrl <= `ALU_FMUL;
+                        `FDIV   : alu_ctrl <= (instruction[24:20]==`X0) ? `ALU_FSQRT : `ALU_FDIV;
+                        `FMUM   : alu_ctrl <= (funct3==3'b000) ? `ALU_FMIN : `ALU_FMAX;
+                        `FSGNJ  : begin
+                            case (funct3)
+                                3'b000  : alu_ctrl <= `ALU_FSGNJ;
+                                3'b001  : alu_ctrl <= `ALU_FSGNJN;
+                                3'b010  : alu_ctrl <= `ALU_FSGNJX;
+                            endcase
+                        end
+                        `FCMP   : begin
+                            case (funct3)
+                                3'b010  : alu_ctrl <= `ALU_FEQ;
+                                3'b001  : alu_ctrl <= `ALU_FLT;
+                                3'b000  : alu_ctrl <= `ALU_FLE;
+                            endcase
+                        end
+                        `FMV_F  : begin
+                            fp_ctrl <= `INT;  // 特例
+                            alu_ctrl <= `ALU_ADD;
+                        end
+                        `FMV_X  : begin
+                            case (funct3)
+                                3'b000  : alu_ctrl <= `ALU_FMV_X_W;
+                                3'b001  : alu_ctrl <= `ALU_FCLASS;
+                            endcase
+                        end
+                        `FCVT_W : alu_ctrl <= (instruction[24:20]==`X0) ? `ALU_F_W_S : `ALU_F_WU_S;
+                        `FCVT_S : begin
+                            fp_ctrl <= `INT;  // 特例
+                            alu_ctrl <= (instruction[24:20]==`X0) ? 
+                                        (funct7[0] ? `ALU_F_D_W : `ALU_F_S_W) : 
+                                        (funct7[0] ? `ALU_F_D_WU : `ALU_F_S_WU);
+                        end
+                        `FCVT_D : begin
+                            fp_ctrl <= ~funct7[0] ? `FP_D : `FP_S;  // 特例
+                            alu_ctrl <= `ALU_F_D;
+                        end
+                    endcase
+                end
+                default : begin
+                    fp_ctrl  <= `INT;
+                    alu_ctrl <= `ALU_NOP;
+                end
             endcase
         end
     end
@@ -151,7 +247,9 @@ module cpu_idu (
         if(!rst_n || flush_flag) begin
             pc_en <= 1'b0;
             rs_en <= 2'b00;
+            frs_en <= 3'b000;
             wr_en <= 1'b0;
+            fp_wr_en <= 1'b0;
             jmp_ctrl <= 3'b000;
             ram_ctrl <= 5'b00000;
             imm_en <= 2'b00;
@@ -161,7 +259,9 @@ module cpu_idu (
         else if(wait_exe) begin
             pc_en <= pc_en;
             rs_en <= rs_en;
+            frs_en <= frs_en;
             wr_en <= wr_en;
+            fp_wr_en <= fp_wr_en;
             jmp_ctrl <= jmp_ctrl;
             ram_ctrl <= ram_ctrl;
             imm_en <= imm_en;
@@ -173,7 +273,9 @@ module cpu_idu (
                 `OP     : begin  // 基础整数运算-寄存器
                     pc_en <= 1'b0;
                     rs_en <= 2'b11;
+                    frs_en <= 3'b000;
                     wr_en <= 1'b1;
+                    fp_wr_en <= 1'b0;
                     jmp_ctrl <= 3'b000;
                     ram_ctrl <= 5'b00000;
                     imm_en <= 2'b00;
@@ -183,7 +285,9 @@ module cpu_idu (
                 `OP_IMM : begin   // 基础整数运算-立即数
                     pc_en <= 1'b0;
                     rs_en <= 2'b01;
+                    frs_en <= 3'b000;
                     wr_en <= 1'b1;
+                    fp_wr_en <= 1'b0;
                     jmp_ctrl <= 3'b000;
                     ram_ctrl <= 5'b00000;
                     imm_en <= 2'b01;
@@ -196,7 +300,9 @@ module cpu_idu (
                 `AUIPC  : begin
                     pc_en <= 1'b1;
                     rs_en <= 2'b00;
+                    frs_en <= 3'b000;
                     wr_en <= 1'b1;
+                    fp_wr_en <= 1'b0;
                     jmp_ctrl <= 3'b000;
                     ram_ctrl <= 5'b00000;
                     imm_en <= 2'b01;
@@ -206,7 +312,9 @@ module cpu_idu (
                 `LUI    : begin
                     pc_en <= 1'b0;
                     rs_en <= 2'b00;
+                    frs_en <= 3'b000;
                     wr_en <= 1'b1;
+                    fp_wr_en <= 1'b0;
                     jmp_ctrl <= 3'b000;
                     ram_ctrl <= 5'b00000;
                     imm_en <= 2'b11;
@@ -216,7 +324,9 @@ module cpu_idu (
                 `JAL    : begin
                     pc_en <= 1'b1;
                     rs_en <= 2'b00;
+                    frs_en <= 3'b000;
                     wr_en <= 1'b1;
+                    fp_wr_en <= 1'b0;
                     jmp_ctrl <= 3'b010;
                     ram_ctrl <= 5'b00000;
                     imm_en <= 2'b01;
@@ -226,7 +336,9 @@ module cpu_idu (
                 `JALR   : begin
                     pc_en <= 1'b1;
                     rs_en <= 2'b00;
+                    frs_en <= 3'b000;
                     wr_en <= 1'b1;
+                    fp_wr_en <= 1'b0;
                     jmp_ctrl <= 3'b110;
                     ram_ctrl <= 5'b00000;
                     imm_en <= 2'b01;
@@ -236,7 +348,9 @@ module cpu_idu (
                 `BRANCH : begin
                     pc_en <= 1'b0;
                     rs_en <= 2'b11;
+                    frs_en <= 3'b000;
                     wr_en <= 1'b0;
+                    fp_wr_en <= 1'b0;
                     jmp_ctrl <= 3'b001;
                     ram_ctrl <= 5'b00000;
                     imm_en <= 2'b00;
@@ -246,7 +360,9 @@ module cpu_idu (
                 `LOAD   : begin
                     pc_en <= 1'b0;
                     rs_en <= 2'b01;
+                    frs_en <= 3'b000;
                     wr_en <= 1'b1;
+                    fp_wr_en <= 1'b0;
                     jmp_ctrl <= 3'b000;
                     ram_ctrl <= {funct3, 2'b01};
                     imm_en <= 2'b01;
@@ -256,17 +372,103 @@ module cpu_idu (
                 `STORE  : begin
                     pc_en <= 1'b0;
                     rs_en <= 2'b11;
+                    frs_en <= 3'b000;
                     wr_en <= 1'b0;
+                    fp_wr_en <= 1'b0;
                     jmp_ctrl <= 3'b000;
                     ram_ctrl <= {funct3, 2'b11};
                     imm_en <= 2'b01;
                     imm1 <= 32'd0;
                     imm0 <= {{20{imm_s[11]}}, imm_s};
                 end
+                `LOAD_FP    : begin
+                    pc_en <= 1'b0;
+                    rs_en <= 2'b01;
+                    frs_en <= 3'b000;
+                    wr_en <= 1'b0;
+                    fp_wr_en <= 1'b1;
+                    jmp_ctrl <= 3'b000;
+                    ram_ctrl <= {funct3, 2'b01};
+                    imm_en <= 2'b01;
+                    imm1 <= 32'd0;
+                    imm0 <= {{20{imm_i[11]}}, imm_i};
+                end
+                `STORE_FP   : begin
+                    pc_en <= 1'b0;
+                    rs_en <= 2'b01;
+                    frs_en <= 3'b010;
+                    wr_en <= 1'b0;
+                    fp_wr_en <= 1'b0;
+                    jmp_ctrl <= 3'b000;
+                    ram_ctrl <= {funct3, 2'b11};
+                    imm_en <= 2'b01;
+                    imm1 <= 32'd0;
+                    imm0 <= {{20{imm_s[11]}}, imm_s};
+                end
+                `MADD, `MSUB, `NMSUB, `NMADD   : begin
+                    pc_en <= 1'b0;
+                    rs_en <= 2'b00;
+                    frs_en <= 3'b111;
+                    wr_en <= 1'b0;
+                    fp_wr_en <= 1'b1;
+                    jmp_ctrl <= 3'b000;
+                    ram_ctrl <= 5'b00000;
+                    imm_en <= 2'b00;
+                    imm1 <= 32'd0;
+                    imm0 <= 32'd0;
+                end
+                `OP_FP  : begin
+                    pc_en <= 1'b0;
+                    jmp_ctrl <= 3'b000;
+                    ram_ctrl <= 5'b00000;
+                    imm_en <= 2'b00;
+                    imm1 <= 32'd0;
+                    imm0 <= 32'd0;
+                    case (funct7[6:1])
+                        `FADD, `FSUB, `FMUL, `FMUM, `FSGNJ  : begin
+                            rs_en <= 2'b00;
+                            frs_en <= 3'b011;
+                            wr_en <= 1'b0;
+                            fp_wr_en <= 1'b1;
+                        end
+                        `FDIV   : begin
+                            rs_en <= 2'b00;
+                            frs_en <= (instruction[24:20]==`X0) ? 3'b001 : 3'b011;
+                            wr_en <= 1'b0;
+                            fp_wr_en <= 1'b1;
+                        end
+                        `FCMP   : begin
+                            rs_en <= 2'b00;
+                            frs_en <= 3'b011;
+                            wr_en <= 1'b1;
+                            fp_wr_en <= 1'b0;
+                        end
+                        `FMV_F, `FCVT_S  : begin
+                            rs_en <= 2'b01;
+                            frs_en <= 3'b000;
+                            wr_en <= 1'b0;
+                            fp_wr_en <= 1'b1;
+                        end
+                        `FMV_X, `FCVT_W  : begin
+                            rs_en <= 2'b00;
+                            frs_en <= 3'b001;
+                            wr_en <= 1'b1;
+                            fp_wr_en <= 1'b0;
+                        end
+                        `FCVT_D : begin
+                            rs_en <= 2'b00;
+                            frs_en <= 3'b001;
+                            wr_en <= 1'b0;
+                            fp_wr_en <= 1'b1;
+                        end
+                    endcase
+                end
                 default : begin
                     pc_en <= 1'b0;
                     rs_en <= 2'b00;
+                    frs_en <= 3'b000;
                     wr_en <= 1'b0;
+                    fp_wr_en <= 1'b0;
                     jmp_ctrl <= 3'b000;
                     ram_ctrl <= 5'b00000;
                     imm_en <= 2'b00;
